@@ -1,8 +1,12 @@
 import logging
+import os
 import pickle
 import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, TypeAlias
+
+import dill  # type: ignore
+import dill.detect  # type: ignore
 
 from dispatch.coroutine import Gather
 from dispatch.error import IncompatibleStateError
@@ -144,15 +148,23 @@ class Coroutine:
 class State:
     """State of the scheduler and the coroutines it's managing."""
 
-    version: str
+    interpreter_version: str
+    scheduler_version: int
+
     suspended: dict[CoroutineID, Coroutine]
     ready: list[Coroutine]
+
     next_coroutine_id: int
     next_call_id: int
 
     prev_callers: list[Coroutine]
 
     outstanding_calls: int
+
+
+# Version of the scheduler and its state. Increment this when a breaking
+# change is introduced.
+SCHEDULER_VERSION = 1
 
 
 class OneShotScheduler:
@@ -165,7 +177,7 @@ class OneShotScheduler:
 
     __slots__ = (
         "entry_point",
-        "version",
+        "interpreter_version",
         "poll_min_results",
         "poll_max_results",
         "poll_max_wait_seconds",
@@ -174,7 +186,7 @@ class OneShotScheduler:
     def __init__(
         self,
         entry_point: Callable,
-        version: str = sys.version,
+        interpreter_version: str = sys.version,
         poll_min_results: int = 1,
         poll_max_results: int = 10,
         poll_max_wait_seconds: int | None = None,
@@ -184,9 +196,9 @@ class OneShotScheduler:
         Args:
             entry_point: Entry point for the main coroutine.
 
-            version: Version string to attach to scheduler/coroutine state.
-                If the scheduler sees a version mismatch, it will respond to
-                Dispatch with an INCOMPATIBLE_STATE status code.
+            interpreter_version: Version string to attach to scheduler /
+                coroutine state. If the scheduler sees a version mismatch it will
+                respond to Dispatch with an INCOMPATIBLE_STATE status code.
 
             poll_min_results: Minimum number of call results to wait for before
                 coroutine execution should continue. Dispatch waits until this
@@ -200,14 +212,15 @@ class OneShotScheduler:
                 while waiting for call results. Optional.
         """
         self.entry_point = entry_point
-        self.version = version
+        self.interpreter_version = interpreter_version
         self.poll_min_results = poll_min_results
         self.poll_max_results = poll_max_results
         self.poll_max_wait_seconds = poll_max_wait_seconds
         logger.debug(
-            "booting coroutine scheduler with entry point '%s' version '%s'",
+            "booting coroutine scheduler with entry point '%s', interpreter version '%s', scheduler version %d",
             entry_point.__qualname__,
-            version,
+            self.interpreter_version,
+            SCHEDULER_VERSION,
         )
 
     def run(self, input: Input) -> Output:
@@ -231,7 +244,8 @@ class OneShotScheduler:
             raise ValueError("entry point is not a @dispatch.function")
 
         return State(
-            version=sys.version,
+            interpreter_version=sys.version,
+            scheduler_version=SCHEDULER_VERSION,
             suspended={},
             ready=[Coroutine(id=0, parent_id=None, coroutine=main)],
             next_coroutine_id=1,
@@ -245,15 +259,22 @@ class OneShotScheduler:
             "resuming scheduler with %d bytes of state", len(input.coroutine_state)
         )
         try:
-            state = pickle.loads(input.coroutine_state)
+            state = deserialize(input.coroutine_state)
             if not isinstance(state, State):
                 raise ValueError("invalid state")
-            if state.version != self.version:
+
+            if state.interpreter_version != self.interpreter_version:
                 raise ValueError(
-                    f"version mismatch: '{state.version}' vs. current '{self.version}'"
+                    f"interpreter version mismatch: '{state.interpreter_version}' vs. current '{self.interpreter_version}'"
                 )
+            if state.scheduler_version != SCHEDULER_VERSION:
+                raise ValueError(
+                    f"scheduler version mismatch: {state.scheduler_version} vs. current {SCHEDULER_VERSION}"
+                )
+
             return state
-        except (pickle.PickleError, ValueError) as e:
+
+        except (pickle.PickleError, AttributeError, ValueError) as e:
             logger.warning("state is incompatible", exc_info=True)
             raise IncompatibleStateError from e
 
@@ -421,7 +442,7 @@ class OneShotScheduler:
         # Serialize coroutines and scheduler state.
         logger.debug("serializing state")
         try:
-            serialized_state = pickle.dumps(state)
+            serialized_state = serialize(state)
         except pickle.PickleError as e:
             logger.exception("state could not be serialized")
             return Output.error(Error.from_exception(e, status=Status.PERMANENT_ERROR))
@@ -444,6 +465,20 @@ class OneShotScheduler:
             max_results=max(1, min(state.outstanding_calls, self.poll_max_results)),
             max_wait_seconds=self.poll_max_wait_seconds,
         )
+
+
+TRACE = os.getenv("DISPATCH_TRACE")
+
+
+def serialize(obj: Any) -> bytes:
+    if TRACE:
+        with dill.detect.trace():
+            return dill.dumps(obj, byref=True)
+    return dill.dumps(obj, byref=True)
+
+
+def deserialize(state: bytes) -> Any:
+    return dill.loads(state)
 
 
 def correlation_id(coroutine_id: CoroutineID, call_id: CallID) -> CorrelationID:
