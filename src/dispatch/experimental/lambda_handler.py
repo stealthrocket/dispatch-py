@@ -48,16 +48,12 @@ class Dispatch(Registry):
 
         """
 
-        # The endpoint (AWS Lambda ARN) is set when handling the first request.
-        super().__init__(endpoint="", api_key=api_key, api_url=api_url)
+        super().__init__(endpoint="not configured", api_key=api_key, api_url=api_url)
 
     def handle(self, event, context):
         # Use the context to determine the ARN of the Lambda function.
         self.endpoint = context.invoked_function_arn
-
-        logger.debug(
-            "Dispatch handler invoked for %s with event: %s", self.endpoint, event
-        )
+        self.override_endpoint(self.endpoint)
 
         if not event:
             raise ValueError("event is required")
@@ -68,7 +64,11 @@ class Dispatch(Registry):
             raise ValueError(f"event is not base64 encoded: {e}")
 
         req = function_pb.RunRequest.FromString(raw)
-        print(req)
+
+        logger.debug(
+            "Dispatch handler invoked for %s with runRequest: %s", self.endpoint, req
+        )
+
         if not req.function:
             req.function = "entrypoint"
             # FIXME raise ValueError("function is required")
