@@ -19,8 +19,8 @@ Example:
     """
 
 import base64
-import logging
 import json
+import logging
 
 from dispatch.function import Registry
 from dispatch.proto import Input
@@ -49,13 +49,15 @@ class Dispatch(Registry):
         """
 
         # The endpoint (AWS Lambda ARN) is set when handling the first request.
-        super().__init__(endpoint=None, api_key=api_key, api_url=api_url)
+        super().__init__(endpoint="", api_key=api_key, api_url=api_url)
 
     def handle(self, event, context):
         # Use the context to determine the ARN of the Lambda function.
         self.endpoint = context.invoked_function_arn
 
-        logger.debug("Dispatch handler invoked for %s with event: %s", self.endpoint, event)
+        logger.debug(
+            "Dispatch handler invoked for %s with event: %s", self.endpoint, event
+        )
 
         if not event:
             raise ValueError("event is required")
