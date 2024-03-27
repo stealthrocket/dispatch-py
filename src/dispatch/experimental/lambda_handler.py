@@ -51,7 +51,8 @@ class Dispatch(Registry):
         super().__init__(endpoint="not configured", api_key=api_key, api_url=api_url)
 
     def handle(self, event, context):
-        # Use the context to determine the ARN of the Lambda function.
+        # The ARN is not none until the first invocation of the Lambda function.
+        # We override the endpoint of all registered functions before any execution.
         self.endpoint = context.invoked_function_arn
         self.override_endpoint(self.endpoint)
 
