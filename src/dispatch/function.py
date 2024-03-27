@@ -209,6 +209,9 @@ class Registry:
     def entrypoint(self, func):
         """Decorated that registers the program entrypoint."""
         name = "entrypoint"
+        if name in self.functions:
+            raise ValueError("@dispatch.entrypoint can be used to decorate only one function")
+
         if not inspect.iscoroutinefunction(func):
             logger.info("registering entrypoint function: %s", name)
             return self._register_function(name, func)
