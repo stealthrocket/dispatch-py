@@ -21,6 +21,7 @@ Example:
 import base64
 import json
 import logging
+from typing import Optional
 
 from dispatch.function import Registry
 from dispatch.proto import Input
@@ -33,8 +34,8 @@ logger = logging.getLogger(__name__)
 class Dispatch(Registry):
     def __init__(
         self,
-        api_key: str | None = None,
-        api_url: str | None = None,
+        api_key: Optional[str] = None,
+        api_url: Optional[str] = None,
     ):
         """Initializes a Dispatch Lambda handler.
 
